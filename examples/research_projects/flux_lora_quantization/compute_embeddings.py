@@ -95,6 +95,8 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset",type=str)
+    parser.add_argument("--dataset",type=str)
     parser.add_argument(
         "--max_sequence_length",
         type=int,
