@@ -61,39 +61,55 @@ def compute_embeddings(pipeline, prompts, max_sequence_length):
 
 
 def run(args):
-    #dataset = load_dataset("Norod78/Yarn-art-style", split="train")
     dataset = load_dataset(args.dataset_name, split="train")
-    image_prompts  = {
-            generate_image_hash(sample["image"]): sample[args.caption_column]
-            for sample in dataset
-            }
-    #image_prompts = {generate_image_hash(sample["image"]): sample["text"] for sample in dataset}
-    all_prompts = list(image_prompts.values())
-    print(f"{len(all_prompts)=}")
+
+    image_hashes = []
+    image_paths = []
+    prompts = []
+
+    for sample in dataset:
+        image = sample["image"]
+        image_hashes.append(generate_image_hash(image))
+        image_paths.append(image.filename)
+        prompts.append(sample[args.caption_column])
+
+    print(f"{len(prompts)=}")
 
     pipeline = load_flux_dev_pipeline()
     all_prompt_embeds, all_pooled_prompt_embeds, all_text_ids = compute_embeddings(
-        pipeline, all_prompts, args.max_sequence_length
+        pipeline, prompts, args.max_sequence_length
     )
 
     data = []
-    for i, (image_hash, _) in enumerate(image_prompts.items()):
-        data.append((image_hash,sample["image"].filename, all_prompt_embeds[i], all_pooled_prompt_embeds[i], all_text_ids[i]))
+    for i in range(len(prompts)):
+        data.append(
+            (
+                image_hashes[i],
+                image_paths[i],
+                all_prompt_embeds[i],
+                all_pooled_prompt_embeds[i],
+                all_text_ids[i],
+            )
+        )
+
     print(f"{len(data)=}")
 
-    # Create a DataFrame
-    embedding_cols = ["prompt_embeds", "pooled_prompt_embeds", "text_ids"]
-    df = pd.DataFrame(data, columns=["image_hash","image_path"] + embedding_cols)
-    print(f"{len(df)=}")
+    df = pd.DataFrame(
+        data,
+        columns=[
+            "image_hash",
+            "image_path",
+            "prompt_embeds",
+            "pooled_prompt_embeds",
+            "text_ids",
+        ],
+    )
 
-    # Convert embedding lists to arrays (for proper storage in parquet)
-    for col in embedding_cols:
+    for col in ["prompt_embeds", "pooled_prompt_embeds", "text_ids"]:
         df[col] = df[col].apply(lambda x: x.cpu().numpy().flatten().tolist())
 
-    # Save the dataframe to a parquet file
     df.to_parquet(args.output_path)
     print(f"Data successfully serialized to {args.output_path}")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
