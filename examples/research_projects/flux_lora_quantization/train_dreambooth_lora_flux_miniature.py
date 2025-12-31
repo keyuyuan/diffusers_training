@@ -41,6 +41,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 from torchvision.transforms.functional import crop
 from tqdm.auto import tqdm
+from PIL import Image
 
 import diffusers
 from diffusers import (
@@ -463,53 +464,67 @@ class DreamBoothDataset(Dataset):
     def __init__(
         self,
         data_df_path,
-        dataset_name,
         size=1024,
         max_sequence_length=77,
         center_crop=False,
     ):
-        # Logistics
         self.size = size
         self.center_crop = center_crop
         self.max_sequence_length = max_sequence_length
 
-        self.data_df_path = Path(data_df_path)
-        if not self.data_df_path.exists():
-            raise ValueError("`data_df_path` doesn't exists.")
+        # === 1. 只从 parquet 读取 ===
+        df = pd.read_parquet(data_df_path)
 
-        # Load images. (Removed
-        # dataset = load_dataset(dataset_name, split="train")
-        # instance_images = [sample["image"] for sample in dataset]
-        # image_hashes = [self.generate_image_hash(image) for image in instance_images]
-        hashed_df = pd.read_parquet(data_df_path)
-        self.instance_images = instance_images
-        self.image_hashes = image_hashes
+        self.image_hashes = df["image_hash"].tolist()
+        self.image_paths = df["image_path"].tolist()
 
-        # Image transformations
-        self.pixel_values = self.apply_image_transformations(
-            instance_images=instance_images, size=size, center_crop=center_crop
-        )
+        # === 2. 读取 embeddings ===
+        self.data_dict = {}
+        for _, row in df.iterrows():
+            prompt_embeds = torch.tensor(row["prompt_embeds"]).reshape(max_sequence_length, 4096)
+            pooled_prompt_embeds = torch.tensor(row["pooled_prompt_embeds"]).reshape(768)
+            text_ids = torch.tensor(row["text_ids"]).reshape(77, 3)
 
-        # Map hashes to embeddings.
-        self.data_dict = self.map_image_hash_embedding(data_df_path=data_df_path)
+            self.data_dict[row["image_hash"]] = (
+                prompt_embeds,
+                pooled_prompt_embeds,
+                text_ids,
+            )
 
-        self.num_instance_images = len(instance_images)
         self._length = len(self.image_hashes)
+
+        # image transforms
+        self.train_resize = transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
+        self.train_crop = transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size)
+        self.train_flip = transforms.RandomHorizontalFlip(p=0.5)
+        self.to_tensor = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize([0.5], [0.5]),
+            ]
+        )
 
     def __len__(self):
         return self._length
 
     def __getitem__(self, index):
-        example = {}
-        instance_image = self.pixel_values[index % self.num_instance_images]
-        image_hash = self.image_hashes[index % self.num_instance_images]
-        prompt_embeds, pooled_prompt_embeds, text_ids = self.data_dict[image_hash]
-        example["instance_images"] = instance_image
-        example["prompt_embeds"] = prompt_embeds
-        example["pooled_prompt_embeds"] = pooled_prompt_embeds
-        example["text_ids"] = text_ids
-        return example
+        image_path = self.image_paths[index]
+        image_hash = self.image_hashes[index]
 
+        image = Image.open(image_path).convert("RGB")
+        image = self.train_resize(image)
+        image = self.train_crop(image)
+        image = self.train_flip(image)
+        pixel_values = self.to_tensor(image)
+
+        prompt_embeds, pooled_prompt_embeds, text_ids = self.data_dict[image_hash]
+
+        return {
+            "instance_images": pixel_values,
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "text_ids": text_ids,
+        }
     def apply_image_transformations(self, instance_images, size, center_crop):
         pixel_values = []
 
@@ -560,8 +575,6 @@ class DreamBoothDataset(Dataset):
             data_dict.update({row["image_hash"]: (prompt_embeds, pooled_prompt_embeds, text_ids)})
         return data_dict
 
-    def generate_image_hash(self, image):
-        return insecure_hashlib.sha256(image.tobytes()).hexdigest()
 
 
 def collate_fn(examples):
@@ -899,11 +912,10 @@ def main(args):
 
     # Dataset and DataLoaders creation:
     train_dataset = DreamBoothDataset(
-        data_df_path=args.data_df_path,
-        dataset_name="Norod78/Yarn-art-style",
-        size=args.resolution,
-        max_sequence_length=args.max_sequence_length,
-        center_crop=args.center_crop,
+    data_df_path=args.data_df_path,
+    size=args.resolution,
+    max_sequence_length=args.max_sequence_length,
+    center_crop=args.center_crop,
     )
 
     train_dataloader = torch.utils.data.DataLoader(
