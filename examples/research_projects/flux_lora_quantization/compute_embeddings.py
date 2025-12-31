@@ -2,6 +2,7 @@
 # coding=utf-8
 
 import argparse
+import os
 import pandas as pd
 import torch
 from datasets import load_dataset
@@ -9,13 +10,14 @@ from huggingface_hub.utils import insecure_hashlib
 from tqdm.auto import tqdm
 from transformers import T5EncoderModel
 from diffusers import FluxPipeline
+from PIL import Image
 
 MAX_SEQ_LENGTH = 77
 OUTPUT_PATH = "embeddings.parquet"
+IMAGE_DIR = "train_images"
 
 
-def generate_image_hash(image):
-    # image is PIL.Image
+def generate_image_hash(image: Image.Image):
     return insecure_hashlib.sha256(image.tobytes()).hexdigest()
 
 
@@ -55,29 +57,36 @@ def compute_embeddings(pipeline, prompts, max_sequence_length):
         pooled_prompt_embeds_all.append(pooled_prompt_embeds)
         text_ids_all.append(text_ids)
 
-    max_mem = torch.cuda.max_memory_allocated() / 1024**3
-    print(f"Max CUDA memory used: {max_mem:.2f} GB")
-
     return prompt_embeds_all, pooled_prompt_embeds_all, text_ids_all
 
 
 def run(args):
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+
     dataset = load_dataset(args.dataset_name, split="train")
 
     image_hashes = []
     image_paths = []
     prompts = []
 
-    for sample in dataset:
-        image = sample["image"]           # PIL.Image
-        image_hashes.append(generate_image_hash(image))
+    print(f"Saving images to ./{IMAGE_DIR}")
 
-        # ✅ 关键修复点：必须用 .path
-        image_paths.append(image.path)
+    for i, sample in enumerate(dataset):
+        image: Image.Image = sample["image"]
+        prompt = sample[args.caption_column]
 
-        prompts.append(sample[args.caption_column])
+        image_hash = generate_image_hash(image)
+        image_path = os.path.join(IMAGE_DIR, f"{image_hash}.png")
 
-    print(f"Loaded {len(prompts)} samples")
+        # ✅ 强制落盘（核心修复）
+        if not os.path.exists(image_path):
+            image.save(image_path)
+
+        image_hashes.append(image_hash)
+        image_paths.append(image_path)
+        prompts.append(prompt)
+
+    print(f"Prepared {len(prompts)} samples")
 
     pipeline = load_flux_dev_pipeline()
     prompt_embeds, pooled_prompt_embeds, text_ids = compute_embeddings(
@@ -107,13 +116,12 @@ def run(args):
         ],
     )
 
-    # parquet 只能存 python 原生 / numpy
     df["prompt_embeds"] = df["prompt_embeds"].apply(lambda x: x.cpu().numpy().flatten().tolist())
     df["pooled_prompt_embeds"] = df["pooled_prompt_embeds"].apply(lambda x: x.cpu().numpy().flatten().tolist())
     df["text_ids"] = df["text_ids"].apply(lambda x: x.cpu().numpy().flatten().tolist())
 
     df.to_parquet(args.output_path)
-    print(f"Saved embeddings to {args.output_path}")
+    print(f"Saved embeddings → {args.output_path}")
 
 
 if __name__ == "__main__":
