@@ -1,63 +1,64 @@
 #!/usr/bin/env python
 # coding=utf-8
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 import argparse
-
 import pandas as pd
 import torch
 from datasets import load_dataset
 from huggingface_hub.utils import insecure_hashlib
 from tqdm.auto import tqdm
 from transformers import T5EncoderModel
-
 from diffusers import FluxPipeline
-
 
 MAX_SEQ_LENGTH = 77
 OUTPUT_PATH = "embeddings.parquet"
 
+
 def generate_image_hash(image):
+    # image is PIL.Image
     return insecure_hashlib.sha256(image.tobytes()).hexdigest()
 
+
 def load_flux_dev_pipeline():
-    id = "black-forest-labs/FLUX.1-dev"
-    text_encoder = T5EncoderModel.from_pretrained(id, subfolder="text_encoder_2", load_in_8bit=True, device_map="auto")
+    model_id = "black-forest-labs/FLUX.1-dev"
+
+    text_encoder = T5EncoderModel.from_pretrained(
+        model_id,
+        subfolder="text_encoder_2",
+        load_in_8bit=True,
+        device_map="auto",
+    )
+
     pipeline = FluxPipeline.from_pretrained(
-        id, text_encoder_2=text_encoder, transformer=None, vae=None, device_map="balanced"
+        model_id,
+        text_encoder_2=text_encoder,
+        transformer=None,
+        vae=None,
+        device_map="balanced",
     )
     return pipeline
 
 
 @torch.no_grad()
 def compute_embeddings(pipeline, prompts, max_sequence_length):
-    all_prompt_embeds = []
-    all_pooled_prompt_embeds = []
-    all_text_ids = []
-    for prompt in tqdm(prompts, desc="Encoding prompts."):
-        (
-            prompt_embeds,
-            pooled_prompt_embeds,
-            text_ids,
-        ) = pipeline.encode_prompt(prompt=prompt, prompt_2=None, max_sequence_length=max_sequence_length)
-        all_prompt_embeds.append(prompt_embeds)
-        all_pooled_prompt_embeds.append(pooled_prompt_embeds)
-        all_text_ids.append(text_ids)
+    prompt_embeds_all = []
+    pooled_prompt_embeds_all = []
+    text_ids_all = []
 
-    max_memory = torch.cuda.max_memory_allocated() / 1024 / 1024 / 1024
-    print(f"Max memory allocated: {max_memory:.3f} GB")
-    return all_prompt_embeds, all_pooled_prompt_embeds, all_text_ids
+    for prompt in tqdm(prompts, desc="Encoding prompts"):
+        prompt_embeds, pooled_prompt_embeds, text_ids = pipeline.encode_prompt(
+            prompt=prompt,
+            prompt_2=None,
+            max_sequence_length=max_sequence_length,
+        )
+        prompt_embeds_all.append(prompt_embeds)
+        pooled_prompt_embeds_all.append(pooled_prompt_embeds)
+        text_ids_all.append(text_ids)
+
+    max_mem = torch.cuda.max_memory_allocated() / 1024**3
+    print(f"Max CUDA memory used: {max_mem:.2f} GB")
+
+    return prompt_embeds_all, pooled_prompt_embeds_all, text_ids_all
 
 
 def run(args):
@@ -68,34 +69,35 @@ def run(args):
     prompts = []
 
     for sample in dataset:
-        image = sample["image"]
+        image = sample["image"]           # PIL.Image
         image_hashes.append(generate_image_hash(image))
-        image_paths.append(image.filename)
+
+        # ✅ 关键修复点：必须用 .path
+        image_paths.append(image.path)
+
         prompts.append(sample[args.caption_column])
 
-    print(f"{len(prompts)=}")
+    print(f"Loaded {len(prompts)} samples")
 
     pipeline = load_flux_dev_pipeline()
-    all_prompt_embeds, all_pooled_prompt_embeds, all_text_ids = compute_embeddings(
+    prompt_embeds, pooled_prompt_embeds, text_ids = compute_embeddings(
         pipeline, prompts, args.max_sequence_length
     )
 
-    data = []
+    rows = []
     for i in range(len(prompts)):
-        data.append(
+        rows.append(
             (
                 image_hashes[i],
                 image_paths[i],
-                all_prompt_embeds[i],
-                all_pooled_prompt_embeds[i],
-                all_text_ids[i],
+                prompt_embeds[i],
+                pooled_prompt_embeds[i],
+                text_ids[i],
             )
         )
 
-    print(f"{len(data)=}")
-
     df = pd.DataFrame(
-        data,
+        rows,
         columns=[
             "image_hash",
             "image_path",
@@ -105,23 +107,21 @@ def run(args):
         ],
     )
 
-    for col in ["prompt_embeds", "pooled_prompt_embeds", "text_ids"]:
-        df[col] = df[col].apply(lambda x: x.cpu().numpy().flatten().tolist())
+    # parquet 只能存 python 原生 / numpy
+    df["prompt_embeds"] = df["prompt_embeds"].apply(lambda x: x.cpu().numpy().flatten().tolist())
+    df["pooled_prompt_embeds"] = df["pooled_prompt_embeds"].apply(lambda x: x.cpu().numpy().flatten().tolist())
+    df["text_ids"] = df["text_ids"].apply(lambda x: x.cpu().numpy().flatten().tolist())
 
     df.to_parquet(args.output_path)
-    print(f"Data successfully serialized to {args.output_path}")
+    print(f"Saved embeddings to {args.output_path}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset_name", type=str, required=True)
     parser.add_argument("--caption_column", type=str, default="text")
-    parser.add_argument(
-        "--max_sequence_length",
-        type=int,
-        default=MAX_SEQ_LENGTH,
-        help="Maximum sequence length to use for computing the embeddings. The more the higher computational costs.",
-    )
-    parser.add_argument("--output_path", type=str, default=OUTPUT_PATH, help="Path to serializethe parquet file.")
-    args = parser.parse_args()
+    parser.add_argument("--max_sequence_length", type=int, default=MAX_SEQ_LENGTH)
+    parser.add_argument("--output_path", type=str, default=OUTPUT_PATH)
 
+    args = parser.parse_args()
     run(args)
