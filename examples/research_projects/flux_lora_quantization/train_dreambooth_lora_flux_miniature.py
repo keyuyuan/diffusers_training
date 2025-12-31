@@ -477,10 +477,11 @@ class DreamBoothDataset(Dataset):
         if not self.data_df_path.exists():
             raise ValueError("`data_df_path` doesn't exists.")
 
-        # Load images.
-        dataset = load_dataset(dataset_name, split="train")
-        instance_images = [sample["image"] for sample in dataset]
-        image_hashes = [self.generate_image_hash(image) for image in instance_images]
+        # Load images. (Removed
+        # dataset = load_dataset(dataset_name, split="train")
+        # instance_images = [sample["image"] for sample in dataset]
+        # image_hashes = [self.generate_image_hash(image) for image in instance_images]
+        hashed_df = pd.read_parquet(data_df_path)
         self.instance_images = instance_images
         self.image_hashes = image_hashes
 
@@ -493,7 +494,7 @@ class DreamBoothDataset(Dataset):
         self.data_dict = self.map_image_hash_embedding(data_df_path=data_df_path)
 
         self.num_instance_images = len(instance_images)
-        self._length = self.num_instance_images
+        self._length = len(self.image_hashes)
 
     def __len__(self):
         return self._length
