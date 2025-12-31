@@ -1,13 +1,9 @@
-#!/usr/bin/env python
-# coding=utf-8
+#!/usr/bin/env python# coding=utf-8
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
+# Licensed under the Apache License, Version 2.0 (the "License");# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at#
+#     http://www.apache.org/licenses/LICENSE-2.0#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,9 +15,7 @@ import argparse
 import pandas as pd
 import torch
 from datasets import load_dataset
-from huggingface_hub.utils import insecure_hashlib
-from tqdm.auto import tqdm
-from transformers import T5EncoderModel
+from huggingface_hub.utils import insecure_hashlibfrom tqdm.auto import tqdmfrom transformers import T5EncoderModel
 
 from diffusers import FluxPipeline
 
@@ -64,8 +58,13 @@ def compute_embeddings(pipeline, prompts, max_sequence_length):
 
 
 def run(args):
-    dataset = load_dataset("Norod78/Yarn-art-style", split="train")
-    image_prompts = {generate_image_hash(sample["image"]): sample["text"] for sample in dataset}
+    #dataset = load_dataset("Norod78/Yarn-art-style", split="train")
+    dataset = load_dataset(args.dataset_name, split="train")
+    image_prompts  = {
+            generate_image_hash(sample["image"]): sample[args.caption_column]
+            for sample in dataset
+            }
+    #image_prompts = {generate_image_hash(sample["image"]): sample["text"] for sample in dataset}
     all_prompts = list(image_prompts.values())
     print(f"{len(all_prompts)=}")
 
@@ -95,8 +94,8 @@ def run(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset",type=str)
-    parser.add_argument("--dataset",type=str)
+    parser.add_argument("--dataset_name", type=str, required=True)
+    parser.add_argument("--caption_column", type=str, default="text")
     parser.add_argument(
         "--max_sequence_length",
         type=int,
