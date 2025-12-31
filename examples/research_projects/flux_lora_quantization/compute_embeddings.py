@@ -1,9 +1,12 @@
-#!/usr/bin/env python# coding=utf-8
+#!/usr/bin/env python
+# coding=utf-8
 # Copyright 2025 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at#
-#     http://www.apache.org/licenses/LICENSE-2.0#
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,7 +18,9 @@ import argparse
 import pandas as pd
 import torch
 from datasets import load_dataset
-from huggingface_hub.utils import insecure_hashlibfrom tqdm.auto import tqdmfrom transformers import T5EncoderModel
+from huggingface_hub.utils import insecure_hashlib
+from tqdm.auto import tqdm
+from transformers import T5EncoderModel
 
 from diffusers import FluxPipeline
 
@@ -23,10 +28,8 @@ from diffusers import FluxPipeline
 MAX_SEQ_LENGTH = 77
 OUTPUT_PATH = "embeddings.parquet"
 
-
 def generate_image_hash(image):
     return insecure_hashlib.sha256(image.tobytes()).hexdigest()
-
 
 def load_flux_dev_pipeline():
     id = "black-forest-labs/FLUX.1-dev"
@@ -75,12 +78,12 @@ def run(args):
 
     data = []
     for i, (image_hash, _) in enumerate(image_prompts.items()):
-        data.append((image_hash, all_prompt_embeds[i], all_pooled_prompt_embeds[i], all_text_ids[i]))
+        data.append((image_hash,sample["image"].filename, all_prompt_embeds[i], all_pooled_prompt_embeds[i], all_text_ids[i]))
     print(f"{len(data)=}")
 
     # Create a DataFrame
     embedding_cols = ["prompt_embeds", "pooled_prompt_embeds", "text_ids"]
-    df = pd.DataFrame(data, columns=["image_hash"] + embedding_cols)
+    df = pd.DataFrame(data, columns=["image_hash","image_path"] + embedding_cols)
     print(f"{len(df)=}")
 
     # Convert embedding lists to arrays (for proper storage in parquet)
@@ -102,7 +105,7 @@ if __name__ == "__main__":
         default=MAX_SEQ_LENGTH,
         help="Maximum sequence length to use for computing the embeddings. The more the higher computational costs.",
     )
-    parser.add_argument("--output_path", type=str, default=OUTPUT_PATH, help="Path to serialize the parquet file.")
+    parser.add_argument("--output_path", type=str, default=OUTPUT_PATH, help="Path to serializethe parquet file.")
     args = parser.parse_args()
 
     run(args)
