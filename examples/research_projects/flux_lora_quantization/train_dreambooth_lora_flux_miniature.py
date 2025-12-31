@@ -176,7 +176,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--data_df_path",
         type=str,
-        default=None,
+        required=True,
         help=("Path to the parquet file serialized with compute_embeddings.py."),
     )
 
@@ -511,6 +511,8 @@ class DreamBoothDataset(Dataset):
         image_path = self.image_paths[index]
         image_hash = self.image_hashes[index]
 
+        #image = Image.open(image_path).convert("RGB")
+        image_path = os.path.abspath(image_path)
         image = Image.open(image_path).convert("RGB")
         image = self.train_resize(image)
         image = self.train_crop(image)
@@ -1049,7 +1051,8 @@ def main(args):
                 # Predict the noise
                 prompt_embeds = batch["prompt_embeds"].to(device=accelerator.device, dtype=weight_dtype)
                 pooled_prompt_embeds = batch["pooled_prompt_embeds"].to(device=accelerator.device, dtype=weight_dtype)
-                text_ids = batch["text_ids"].to(device=accelerator.device, dtype=weight_dtype)
+                #text_ids = batch["text_ids"].to(device=accelerator.device, dtype=weight_dtype)
+                text_ids = batch["text_ids"].to(device=accelerator.device)
                 model_pred = transformer(
                     hidden_states=packed_noisy_model_input,
                     # YiYi notes: divide it by 1000 for now because we scale it by 1000 in the transformer model (we should not keep it but I want to keep the inputs same for the model for testing)
