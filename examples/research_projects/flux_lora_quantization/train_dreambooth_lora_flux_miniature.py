@@ -481,9 +481,9 @@ class DreamBoothDataset(Dataset):
         # === 2. 读取 embeddings ===
         self.data_dict = {}
         for _, row in df.iterrows():
-            prompt_embeds = torch.tensor(row["prompt_embeds"]).reshape(max_sequence_length, 4096)
-            pooled_prompt_embeds = torch.tensor(row["pooled_prompt_embeds"]).reshape(768)
-            text_ids = torch.tensor(row["text_ids"]).reshape(77, 3)
+            prompt_embeds = torch.tensor(row["prompt_embeds"], dtype=torch.float32).reshape(max_sequence_length, 4096)
+            pooled_prompt_embeds = torch.tensor(row["pooled_prompt_embeds"], dtype=torch.float32).reshape(768)
+            text_ids = torch.tensor(row["text_ids"], dtype=torch.long).reshape(77, 3)
 
             self.data_dict[row["image_hash"]] = (
                 prompt_embeds,
@@ -525,56 +525,6 @@ class DreamBoothDataset(Dataset):
             "pooled_prompt_embeds": pooled_prompt_embeds,
             "text_ids": text_ids,
         }
-    def apply_image_transformations(self, instance_images, size, center_crop):
-        pixel_values = []
-
-        train_resize = transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
-        train_crop = transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size)
-        train_flip = transforms.RandomHorizontalFlip(p=1.0)
-        train_transforms = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize([0.5], [0.5]),
-            ]
-        )
-        for image in instance_images:
-            image = exif_transpose(image)
-            if not image.mode == "RGB":
-                image = image.convert("RGB")
-            image = train_resize(image)
-            if args.random_flip and random.random() < 0.5:
-                # flip
-                image = train_flip(image)
-            if args.center_crop:
-                y1 = max(0, int(round((image.height - args.resolution) / 2.0)))
-                x1 = max(0, int(round((image.width - args.resolution) / 2.0)))
-                image = train_crop(image)
-            else:
-                y1, x1, h, w = train_crop.get_params(image, (args.resolution, args.resolution))
-                image = crop(image, y1, x1, h, w)
-            image = train_transforms(image)
-            pixel_values.append(image)
-
-        return pixel_values
-
-    def convert_to_torch_tensor(self, embeddings: list):
-        prompt_embeds = embeddings[0]
-        pooled_prompt_embeds = embeddings[1]
-        text_ids = embeddings[2]
-        prompt_embeds = np.array(prompt_embeds).reshape(self.max_sequence_length, 4096)
-        pooled_prompt_embeds = np.array(pooled_prompt_embeds).reshape(768)
-        text_ids = np.array(text_ids).reshape(77, 3)
-        return torch.from_numpy(prompt_embeds), torch.from_numpy(pooled_prompt_embeds), torch.from_numpy(text_ids)
-
-    def map_image_hash_embedding(self, data_df_path):
-        hashes_df = pd.read_parquet(data_df_path)
-        data_dict = {}
-        for i, row in hashes_df.iterrows():
-            embeddings = [row["prompt_embeds"], row["pooled_prompt_embeds"], row["text_ids"]]
-            prompt_embeds, pooled_prompt_embeds, text_ids = self.convert_to_torch_tensor(embeddings=embeddings)
-            data_dict.update({row["image_hash"]: (prompt_embeds, pooled_prompt_embeds, text_ids)})
-        return data_dict
-
 
 
 def collate_fn(examples):
